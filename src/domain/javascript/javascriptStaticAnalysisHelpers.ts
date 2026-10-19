@@ -32,6 +32,7 @@ export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
   references: [],
   endpoints: [],
   storage: [],
+  crypto: [],
   bundler_registrations: [],
   role_paths: [],
   source_map_urls: [],

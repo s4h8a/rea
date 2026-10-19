@@ -19,6 +19,7 @@ import {
   sortedUnique,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
+import { inspectCryptoUsageNode } from "./javascriptCryptoUsage.js";
 import {
   addReference,
   addSourceMapDirectives,
@@ -174,6 +175,11 @@ const finalizeStaticAnalysis = (
     )
       ? [ELECTRON_IDENTITY_LIMITATION]
       : []),
+    ...(accumulator.crypto.length === 0
+      ? []
+      : [
+          "Cryptographic usage facts come from static syntax; key material, IV and nonce randomness provenance, integrity protection outside the analyzed call sites, and decryption-oracle exposure remain unproven.",
+        ]),
     "JavaScript syntax was parsed as data and was never evaluated.",
   ];
   return {
@@ -193,6 +199,10 @@ const finalizeStaticAnalysis = (
     ),
     storage: finalizeLocatedFindings(
       accumulator.storage,
+      accumulator.moduleRangeIndex,
+    ),
+    crypto: finalizeLocatedFindings(
+      accumulator.crypto,
       accumulator.moduleRangeIndex,
     ),
     bundler_registrations: sortedUnique(
@@ -245,6 +255,7 @@ const inspectNode = (
 ): void => {
   const { source, accumulator } = findings;
   inspectElectronStaticNode(node, findings);
+  inspectCryptoUsageNode(node, findings);
   if (t.isCallExpression(node)) {
     inspectBundlerBootstrap(source, node, accumulator, bindings);
     inspectBundlerRegistration(source, node, accumulator, bindings);

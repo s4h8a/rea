@@ -54,6 +54,14 @@ it("retains candidate endpoint interpretation across the worker boundary", () =>
   ).toBe(false);
 });
 
+it("transfers crypto usage facts across the worker boundary", () => {
+  const facts = analyzeJavaScriptStaticSource(
+    `crypto.createCipheriv("aes-128-ecb", "0123456789abcdef", null);`,
+  );
+  const serialized = JSON.parse(JSON.stringify(facts)) as unknown;
+  expect(javaScriptWorkerStaticAnalysisSchema.parse(serialized)).toEqual(facts);
+});
+
 it.each(["babel-ast-v1", "babel-ast-v2"])(
   "versions fingerprints through the worker schema and rejects %s",
   (oldAlgorithm) => {

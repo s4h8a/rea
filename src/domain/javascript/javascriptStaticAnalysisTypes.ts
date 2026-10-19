@@ -72,6 +72,62 @@ export interface JavaScriptStaticStorage {
   readonly location: JavaScriptSourceRange;
 }
 
+/** Cipher library whose entry point a crypto usage fact was recovered from. */
+export type JavaScriptCryptoLibrary =
+  | "node-crypto"
+  | "crypto-js"
+  | "node-forge"
+  | "webcrypto";
+
+/** Cipher mode tokens recognized from algorithm names and library options. */
+export type JavaScriptCryptoMode =
+  | "ecb"
+  | "cbc"
+  | "ctr"
+  | "gcm"
+  | "cfb"
+  | "ofb"
+  | "ccm"
+  | "ocb";
+
+/** Risk factors statically derivable from one cipher call site. */
+export type JavaScriptCryptoRisk =
+  | "ecb-mode"
+  | "static-iv"
+  | "gcm-nonce-reuse"
+  | "cbc-without-integrity"
+  | "hardcoded-key"
+  | "deterministic-password-cipher";
+
+/** One cryptographic cipher usage recovered from static syntax. */
+export interface JavaScriptCryptoUsage {
+  readonly library: JavaScriptCryptoLibrary;
+  readonly operation: "cipher" | "decipher";
+  /** Normalized algorithm name when the call commits one; null when dynamic. */
+  readonly algorithm: string | null;
+  readonly mode: JavaScriptCryptoMode | null;
+  readonly key_source:
+    | "hardcoded-literal"
+    | "static-buffer"
+    | "random"
+    | "code-expression"
+    | "unknown";
+  readonly iv_source:
+    | "literal"
+    | "static-buffer"
+    | "random"
+    | "code-expression"
+    | "absent"
+    | "unknown";
+  /** Candidate risk factors observable at this call site. */
+  readonly risks: readonly JavaScriptCryptoRisk[];
+  readonly mechanism: string;
+  readonly module_key: string | null;
+  /** Recovered factory runtime; absent in older or unbundled findings. */
+  readonly module_runtime?: string;
+  readonly location: JavaScriptSourceRange;
+}
+
 interface JavaScriptBundlerModuleState {
   readonly module_key: string;
   readonly factory_require_name: string | null;
@@ -122,6 +178,7 @@ export interface JavaScriptStaticAnalysis {
   readonly references: readonly JavaScriptStaticReference[];
   readonly endpoints: readonly JavaScriptStaticEndpoint[];
   readonly storage: readonly JavaScriptStaticStorage[];
+  readonly crypto: readonly JavaScriptCryptoUsage[];
   readonly bundler_registrations: readonly JavaScriptBundlerRegistration[];
   readonly role_paths: readonly JavaScriptRolePath[];
   readonly source_map_urls: readonly {

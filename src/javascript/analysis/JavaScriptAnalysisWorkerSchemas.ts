@@ -349,6 +349,48 @@ export const javaScriptWorkerStaticAnalysisSchema = z
         mechanism: z.string(),
       }),
     ),
+    crypto: z.array(
+      z.strictObject({
+        ...findingContext,
+        library: z.enum([
+          "node-crypto",
+          "crypto-js",
+          "node-forge",
+          "webcrypto",
+        ]),
+        operation: z.enum(["cipher", "decipher"]),
+        algorithm: z.string().nullable(),
+        mode: z
+          .enum(["ecb", "cbc", "ctr", "gcm", "cfb", "ofb", "ccm", "ocb"])
+          .nullable(),
+        key_source: z.enum([
+          "hardcoded-literal",
+          "static-buffer",
+          "random",
+          "code-expression",
+          "unknown",
+        ]),
+        iv_source: z.enum([
+          "literal",
+          "static-buffer",
+          "random",
+          "code-expression",
+          "absent",
+          "unknown",
+        ]),
+        risks: z.array(
+          z.enum([
+            "ecb-mode",
+            "static-iv",
+            "gcm-nonce-reuse",
+            "cbc-without-integrity",
+            "hardcoded-key",
+            "deterministic-password-cipher",
+          ]),
+        ),
+        mechanism: z.string(),
+      }),
+    ),
     bundler_registrations: z.array(
       z.strictObject({
         bundler: z.enum(["webpack", "rspack", "esbuild"]),
@@ -397,6 +439,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
     ...analysis,
     endpoints: analysis.endpoints.map(withRuntime),
     storage: analysis.storage.map(withRuntime),
+    crypto: analysis.crypto.map(withRuntime),
     role_paths: analysis.role_paths.map(withRuntime),
     electron: {
       ...analysis.electron,
