@@ -181,3 +181,91 @@ it("records the static-syntax limitation when cipher usage is found", () => {
     ),
   ).toBe(true);
 });
+
+it("flags a static GCM nonce held in a const binding", () => {
+  const usages = cryptoUsageOf(
+    'const NONCE = Buffer.alloc(12, 0);\ncrypto.createCipheriv("aes-256-gcm", key, NONCE);',
+  );
+  expect(usages).toEqual([
+    expect.objectContaining({
+      mode: "gcm",
+      iv_source: "static-buffer",
+      risks: ["gcm-nonce-reuse"],
+    }),
+  ]);
+});
+
+it("resolves a const alias chain for the IV", () => {
+  const usages = cryptoUsageOf(
+    'const BASE = Buffer.alloc(12);\nconst NONCE = BASE;\ncrypto.createCipheriv("aes-256-gcm", key, NONCE);',
+  );
+  expect(usages).toEqual([
+    expect.objectContaining({
+      iv_source: "static-buffer",
+      risks: ["gcm-nonce-reuse"],
+    }),
+  ]);
+});
+
+it("flags a hardcoded key held in a const binding", () => {
+  const usages = cryptoUsageOf(
+    'const KEY = "0123456789abcdef";\ncrypto.createCipheriv("aes-128-ecb", KEY, null);',
+  );
+  expect(usages).toEqual([
+    expect.objectContaining({
+      key_source: "hardcoded-literal",
+      risks: ["ecb-mode", "hardcoded-key"],
+    }),
+  ]);
+});
+
+it("keeps a random const keystream free of risks", () => {
+  const usages = cryptoUsageOf(
+    'const NONCE = crypto.randomBytes(12);\ncrypto.createCipheriv("aes-256-gcm", key, NONCE);',
+  );
+  expect(usages).toEqual([
+    expect.objectContaining({ iv_source: "random", risks: [] }),
+  ]);
+});
+
+it("does not resolve a reassigned binding", () => {
+  const usages = cryptoUsageOf(
+    'let NONCE = Buffer.alloc(12);\nNONCE = crypto.randomBytes(12);\ncrypto.createCipheriv("aes-256-gcm", key, NONCE);',
+  );
+  expect(usages).toEqual([
+    expect.objectContaining({ iv_source: "code-expression", risks: [] }),
+  ]);
+});
+
+it("does not resolve a parameter shadowing a static const", () => {
+  const usages = cryptoUsageOf(
+    'const NONCE = Buffer.alloc(12, 0);\nfunction seal(NONCE) {\n  crypto.createCipheriv("aes-256-gcm", key, NONCE);\n}',
+  );
+  expect(usages).toEqual([
+    expect.objectContaining({ iv_source: "code-expression", risks: [] }),
+  ]);
+});
+
+it("resolves static consts read inside a function body", () => {
+  const usages = cryptoUsageOf(
+    'const NONCE = Buffer.alloc(12, 0);\nfunction seal() {\n  return crypto.createCipheriv("aes-256-gcm", key, NONCE);\n}',
+  );
+  expect(usages).toEqual([
+    expect.objectContaining({
+      iv_source: "static-buffer",
+      risks: ["gcm-nonce-reuse"],
+    }),
+  ]);
+});
+
+it("resolves a const IV inside a CryptoJS configuration object", () => {
+  const usages = cryptoUsageOf(
+    'const IV = "0123456789abcdef";\nCryptoJS.AES.encrypt(message, key, { iv: IV });',
+  );
+  expect(usages).toEqual([
+    expect.objectContaining({
+      iv_source: "literal",
+      risks: ["static-iv", "cbc-without-integrity"],
+    }),
+  ]);
+});

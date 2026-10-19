@@ -1,5 +1,6 @@
 import type * as t from "@babel/types";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
+import type { JavaScriptBindingIndex } from "./javascriptSemanticState.js";
 import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 
 import type {
@@ -89,6 +90,8 @@ export interface JavaScriptFindingContext {
   readonly openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
   /** Proven Electron export path segments by root offset. */
   readonly electronBindings?: ReadonlyMap<number, readonly string[]>;
+  /** Lexical binding lookup for resolving constant key, IV, and nonce sources. */
+  readonly bindingIndex?: JavaScriptBindingIndex;
 }
 
 /** Candidate import, require, worker, or service-worker reference. */

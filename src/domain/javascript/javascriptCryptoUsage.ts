@@ -13,6 +13,10 @@ import {
   staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import {
+  semanticStableInitializer,
+  type JavaScriptBindingIndex,
+} from "./javascriptSemanticState.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 import type {
   JavaScriptCryptoLibrary,
@@ -169,8 +173,14 @@ const classifyConstructorSecret = (node: CryptoCallable): SecretSource => {
   }
 };
 
+/** Resolve one identifier reference to a classified constant initializer. */
+type SecretResolver = (identifier: t.Identifier) => SecretSource | undefined;
+
 /** Classify one key, IV, or nonce argument expression. */
-const classifySecretSource = (node: t.Node | undefined): SecretSource => {
+const classifySecretSource = (
+  node: t.Node | undefined,
+  resolve?: SecretResolver,
+): SecretSource => {
   if (node === undefined) return "unknown";
   const expression = unwrapped(node);
   if (t.isNullLiteral(expression)) return "absent";
@@ -182,12 +192,52 @@ const classifySecretSource = (node: t.Node | undefined): SecretSource => {
     t.isNewExpression(expression)
   )
     return classifyConstructorSecret(expression);
+  if (t.isIdentifier(expression)) {
+    const resolved = resolve?.(expression);
+    if (resolved !== undefined) return resolved;
+  }
   return "code-expression";
 };
 
+/**
+ * Resolve one identifier chain to the classified const initializer source.
+ * Only immutable single const declarations with one unconditional,
+ * non-projected initializer resolve. Read ordering is deliberately not
+ * required: an immutable binding cannot produce another value when the read
+ * executes, and a read before initialization throws instead of substituting
+ * a different source. Chains that do not resolve stay unclassified.
+ */
+const stableConstSource = (
+  reference: t.Identifier,
+  index: JavaScriptBindingIndex,
+): SecretSource | undefined => {
+  const seen = new Set<t.Node>();
+  let current: t.Node = reference;
+  while (t.isIdentifier(current)) {
+    if (seen.has(current)) return undefined;
+    seen.add(current);
+    const binding = index.bindingForReferenceAt(current);
+    if (binding === undefined) return undefined;
+    const initializer = semanticStableInitializer(binding, index.bindings);
+    if (
+      binding.mutable ||
+      binding.declarationKinds.size !== 1 ||
+      !binding.declarationKinds.has("const") ||
+      initializer === undefined ||
+      initializer.projection.length !== 0
+    )
+      return undefined;
+    current = unwrapped(initializer.node);
+  }
+  return classifySecretSource(current);
+};
+
 /** Classify the IV or nonce argument of one call site. */
-const ivSourceOf = (node: t.Node | undefined): SecretSource =>
-  node === undefined ? "absent" : classifySecretSource(node);
+const ivSourceOf = (
+  node: t.Node | undefined,
+  resolve?: SecretResolver,
+): SecretSource =>
+  node === undefined ? "absent" : classifySecretSource(node, resolve);
 
 /** Map an internal secret source into the key-source vocabulary. */
 const keySourceOf = (
@@ -226,6 +276,7 @@ const cipherivFacts = (
   node: CryptoCallable,
   name: string,
   operation: "cipher" | "decipher",
+  resolve?: SecretResolver,
 ): CryptoCallFacts => {
   const parsed = parseAlgorithmName(stringValue(argumentAt(node, 0)));
   return {
@@ -234,7 +285,7 @@ const cipherivFacts = (
     algorithm: parsed.algorithm,
     mode: parsed.mode,
     key: argumentAt(node, 1),
-    ivSource: ivSourceOf(argumentAt(node, 2)),
+    ivSource: ivSourceOf(argumentAt(node, 2), resolve),
     passwordDerived: false,
     mechanism: `node-crypto:${lastSegment(name)}`,
   };
@@ -295,6 +346,7 @@ const cryptoJsMode = (
 const cryptoJsFacts = (
   node: CryptoCallable,
   operation: "cipher" | "decipher",
+  resolve?: SecretResolver,
 ): CryptoCallFacts => {
   const configArgument = argumentAt(node, 2);
   const config = objectArgument(configArgument);
@@ -309,7 +361,7 @@ const cryptoJsFacts = (
         ? configArgument === undefined
           ? "absent"
           : "unknown"
-        : ivSourceOf(semanticFinalObjectProperty(config, "iv")),
+        : ivSourceOf(semanticFinalObjectProperty(config, "iv"), resolve),
     passwordDerived: false,
     mechanism: `crypto-js:AES.${operation === "cipher" ? "encrypt" : "decrypt"}`,
   };
@@ -319,6 +371,7 @@ const cryptoJsFacts = (
 const webCryptoFacts = (
   node: CryptoCallable,
   operation: "cipher" | "decipher",
+  resolve?: SecretResolver,
 ): CryptoCallFacts | null => {
   const algorithm = objectArgument(argumentAt(node, 0));
   if (algorithm === undefined) return null;
@@ -331,7 +384,7 @@ const webCryptoFacts = (
     algorithm: parsed.algorithm,
     mode: parsed.mode,
     key: argumentAt(node, 1),
-    ivSource: ivSourceOf(semanticFinalObjectProperty(algorithm, "iv")),
+    ivSource: ivSourceOf(semanticFinalObjectProperty(algorithm, "iv"), resolve),
     passwordDerived: false,
     mechanism: `webcrypto:subtle.${operation === "cipher" ? "encrypt" : "decrypt"}`,
   };
@@ -341,6 +394,7 @@ const webCryptoFacts = (
 const cryptoCallFacts = (
   node: CryptoCallable,
   name: string,
+  resolve?: SecretResolver,
 ): CryptoCallFacts | null => {
   if (t.isNewExpression(node)) return null;
   const segments = name.split(".");
@@ -348,9 +402,9 @@ const cryptoCallFacts = (
   const parent = segments.at(-2) ?? "";
   switch (method) {
     case "createCipheriv":
-      return cipherivFacts(node, name, "cipher");
+      return cipherivFacts(node, name, "cipher", resolve);
     case "createDecipheriv":
-      return cipherivFacts(node, name, "decipher");
+      return cipherivFacts(node, name, "decipher", resolve);
     case "createCipher":
     case "createDecipher": {
       const operation = method === "createCipher" ? "cipher" : "decipher";
@@ -361,8 +415,10 @@ const cryptoCallFacts = (
     case "encrypt":
     case "decrypt": {
       const operation = method === "encrypt" ? "cipher" : "decipher";
-      if (parent === "AES") return cryptoJsFacts(node, operation);
-      return parent === "subtle" ? webCryptoFacts(node, operation) : null;
+      if (parent === "AES") return cryptoJsFacts(node, operation, resolve);
+      return parent === "subtle"
+        ? webCryptoFacts(node, operation, resolve)
+        : null;
     }
     default:
       return null;
@@ -375,9 +431,14 @@ export const inspectCryptoUsageNode = (
   context: JavaScriptFindingContext,
 ): void => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
-  const facts = cryptoCallFacts(node, calleeName(node.callee));
+  const index = context.bindingIndex;
+  const resolve: SecretResolver | undefined =
+    index === undefined
+      ? undefined
+      : (identifier: t.Identifier) => stableConstSource(identifier, index);
+  const facts = cryptoCallFacts(node, calleeName(node.callee), resolve);
   if (facts === null) return;
-  const keySecret = classifySecretSource(facts.key);
+  const keySecret = classifySecretSource(facts.key, resolve);
   addLocatedFinding(context, {
     collection: context.accumulator.crypto,
     key: `crypto:${facts.mechanism}`,

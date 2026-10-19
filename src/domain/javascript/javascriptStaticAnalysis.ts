@@ -99,6 +99,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     vitePreloadDependencyTable: indexVitePreloadDependencyTable(file.program),
     openReceiverFacts: receivers.openReceivers,
     electronBindings: electronIdentity.bindings,
+    bindingIndex: index,
     rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
   };
   yield* traverseStaticSourceSteps(file, findings, bindings);
