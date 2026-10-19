@@ -31,6 +31,7 @@ import { moduleResolutionModeForJavaScriptReference } from "../../domain/javascr
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
 type StaticEndpoint = JavaScriptStaticAnalysis["endpoints"][number];
 type StaticStorage = JavaScriptStaticAnalysis["storage"][number];
+type StaticCrypto = JavaScriptStaticAnalysis["crypto"][number];
 type StaticRolePath = JavaScriptStaticAnalysis["role_paths"][number];
 type StaticSourceMap = JavaScriptStaticAnalysis["source_map_urls"][number];
 
@@ -50,7 +51,7 @@ interface ResolvedReference {
   readonly resolution?: ArtifactPathResolution;
 }
 
-/** Project imports, workers, roles, endpoints, storage, and source-map links. */
+/** Project imports, workers, roles, endpoints, storage, crypto usage, and source-map links. */
 export function* addJavaScriptStaticFindingsSteps(
   context: JavaScriptArtifactGraphContext,
 ): Generator<void, readonly string[]> {
@@ -67,6 +68,8 @@ export function* addJavaScriptStaticFindingsSteps(
       addEndpoint(context, { file, asset, value, coverage });
     for (const value of javascript.storage)
       addStorage(context, { file, asset, value, coverage });
+    for (const value of javascript.crypto)
+      addCryptoUsage(context, { file, asset, value, coverage });
     for (const value of javascript.role_paths)
       addDiscoveredRole(context, { file, asset, value, coverage });
     for (const value of javascript.source_map_urls)
@@ -338,6 +341,64 @@ const addStorage = (
     ...(candidate
       ? { confidence: "low" as const, limitations: [limitation] }
       : {}),
+  });
+};
+
+const addCryptoUsage = (
+  context: JavaScriptArtifactGraphContext,
+  input: FindingInput<StaticCrypto>,
+): void => {
+  const { value } = input;
+  const source =
+    sourceNodeFor(
+      context,
+      input.file.path,
+      value.module_key,
+      value.module_runtime,
+    ) ?? input.asset;
+  const riskLimitation =
+    "Risk labels are candidate factors derived from static argument syntax; key material, randomness provenance and exploitability remain unproven.";
+  const node = context.accumulator.addNode({
+    kind: "crypto-usage",
+    identity: artifactLocalIdentity(
+      input.file.sha256,
+      `${value.library}:${value.operation}`,
+      JSON.stringify([value.mechanism, value.location]),
+    ),
+    observations: [
+      {
+        label: value.algorithm ?? value.mechanism,
+        properties: {
+          library: value.library,
+          operation: value.operation,
+          algorithm: value.algorithm,
+          mode: value.mode,
+          key_source: value.key_source,
+          iv_source: value.iv_source,
+          risks: [...value.risks],
+          mechanism: value.mechanism,
+        },
+        evidence: astObservationEvidence({
+          sha256: input.file.sha256,
+          path: input.file.path,
+          range: value.location,
+          operation: "discover-static-crypto-usage",
+          coverage: input.coverage,
+          ...(value.risks.length === 0
+            ? {}
+            : { limitations: [riskLimitation] }),
+        }),
+      },
+    ],
+  });
+  addStaticInferenceEdge(context, {
+    source,
+    target: node,
+    file: input.file,
+    range: value.location,
+    coverage: input.coverage,
+    relation: "calls",
+    properties: { mechanism: value.mechanism },
   });
 };
 

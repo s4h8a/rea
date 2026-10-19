@@ -37,6 +37,7 @@ export const JAVASCRIPT_APPLICATION_NODE_KINDS = [
   "service-worker",
   "endpoint",
   "storage",
+  "crypto-usage",
   "native-addon",
   "native-export",
   "managed-assembly",
